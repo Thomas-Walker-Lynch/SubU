@@ -3,31 +3,41 @@
   <head>
     <meta charset="UTF-8">
     <title>Subu User Containers</title>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP&display=swap" rel="stylesheet">
-    
-    <script src="style/body_visibility_hidden.js"></script>
     <script>
-      window.StyleRT.body_visibility_hidden();
+      {
+        let dirpr_library = null;
+        try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}
+        window.RT = window.RT || {};
+        RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";
+        document.write('<script src="' + RT.dirpr_library + '/Core/RT-Manuscript_make.js"><\/script>');
+      }
+    </script>
+    <script>
+      window.RT.theme_preference('inverse_wheat');
+      window.RT.load('Layout/paginate');
+      window.RT.load('Layout/article_tech_ref');
+      window.RT.load('Element/theme_selector');
     </script>
   </head>
   <body>
-    <RT-article>
-      <RT-title 
+    <RT·theme-selector></RT·theme-selector>
+    <RT·article>
+      <RT·title 
         author="Thomas Walker Lynch" 
         date="2026-03-02 20:38" 
         title="Subu User Containers">
-      </RT-title>
+      </RT·title>
 
-      <RT-TOC level="1"></RT-TOC>
+      <RT·TOC level="1"></RT·TOC>
 
       <h1>Introduction</h1>
 
       <p>
-        A <RT-neologism>Subu</RT-neologism> is an isolated user environment operating within a broader parent system. It functions as a strict <RT-neologism>User Container</RT-neologism>. Each subu possesses its own namespace, isolated processes, and dedicated I/O resources.
+        A <RT·neologism>Subu</RT·neologism> is an isolated user environment operating within a broader parent system. It functions as a strict <RT·neologism>User Container</RT·neologism>. Each subu possesses its own namespace, isolated processes, and dedicated I/O resources.
       </p>
 
       <p>
-        The core architectural goal of the subu system is administration without elevation. A <RT-neologism>Master User</RT-neologism> has the ability to completely administer a subordinate user environment without requiring <RT-code>sudo</RT-code> privileges or system-wide root access. The master user accomplishes this through a dedicated suite of tools and a specialized file system architecture.
+        The core architectural goal of the subu system is administration without elevation. A <RT·neologism>Master User</RT·neologism> has the ability to completely administer a subordinate user environment without requiring <RT·code>sudo</RT·code> privileges or system-wide root access. The master user accomplishes this through a dedicated suite of tools and a specialized file system architecture.
       </p>
 
       <h1>Design Decisions and Architecture</h1>
@@ -35,25 +45,25 @@
       <h2>Namespacing</h2>
 
       <p>
-        Subu accounts require a naming convention that links them logically to their master user while remaining fully compliant with standard Linux utilities. The system utilizes the middle dot (<RT-code>·</RT-code>) as the namespace separator.
+        Subu accounts require a naming convention that links them logically to their master user while remaining fully compliant with standard Linux utilities. The system utilizes the middle dot (<RT·code>·</RT·code>) as the namespace separator.
       </p>
 
       <p>
-        An example account name is <RT-code>Thomas·developer</RT-code>.
+        An example account name is <RT·code>Thomas·developer</RT·code>.
       </p>
 
       <p>
-        The middle dot offers several distinct advantages over traditional separators. The colon (<RT-code>:</RT-code>) is strictly forbidden, as it acts as the field delimiter in <RT-code>/etc/passwd</RT-code> and will corrupt the system configuration. The hyphen (<RT-code>-</RT-code>) and underscore (<RT-code>_</RT-code>) are heavily utilized in standard user naming conventions, increasing the probability of accidental collisions. The middle dot is visually clean, requires a specific <RT-code>--badname</RT-code> flag during account creation, and presents a typing barrier for standard users, practically eliminating accidental naming conflicts.
+        The middle dot offers several distinct advantages over traditional separators. The colon (<RT·code>:</RT·code>) is strictly forbidden, as it acts as the field delimiter in <RT·code>/etc/passwd</RT·code> and will corrupt the system configuration. The hyphen (<RT·code>-</RT·code>) and underscore (<RT·code>_</RT·code>) are heavily utilized in standard user naming conventions, increasing the probability of accidental collisions. The middle dot is visually clean, requires a specific <RT·code>--badname</RT·code> flag during account creation, and presents a typing barrier for standard users, practically eliminating accidental naming conflicts.
       </p>
 
       <h2>The File System Dilemma</h2>
 
       <p>
-        Attempting to nest subu home directories within the master user's home directory (e.g., <RT-code>/home/Thomas/subu/developer</RT-code>) creates an intractable conflict with <RT-term>POSIX</RT-term> permissions and <RT-term>Access Control Lists</RT-term> (ACLs). 
+        Attempting to nest subu home directories within the master user's home directory (e.g., <RT·code>/home/Thomas/subu/developer</RT·code>) creates an intractable conflict with <RT·term>POSIX</RT·term> permissions and <RT·term>Access Control Lists</RT·term> (ACLs). 
       </p>
 
       <p>
-        If a subu is nested, the operating system requires group execute permissions on the master's home directory to allow traversal. If a person attempts to restrict this using ACL masks, the subu retains sovereign control over its own files. A subu executing a standard <RT-code>chmod 600</RT-code> on a file recalculates the ACL mask to zero, instantly severing the master user's access to that file and causing subsequent system backups to fail with permission errors.
+        If a subu is nested, the operating system requires group execute permissions on the master's home directory to allow traversal. If a person attempts to restrict this using ACL masks, the subu retains sovereign control over its own files. A subu executing a standard <RT·code>chmod 600</RT·code> on a file recalculates the ACL mask to zero, instantly severing the master user's access to that file and causing subsequent system backups to fail with permission errors.
       </p>
 
       <h2>The Dual Layer Architecture</h2>
@@ -65,13 +75,13 @@
       <h3>The Physical Layer</h3>
 
       <p>
-        Every subu home directory resides directly under <RT-code>/home</RT-code>, entirely flat and parallel to the master user account. 
+        Every subu home directory resides directly under <RT·code>/home</RT·code>, entirely flat and parallel to the master user account. 
       </p>
 
-      <RT-code>
+      <RT·code>
         /home/Thomas
         /home/Thomas·developer
-      </RT-code>
+      </RT·code>
 
       <p>
         Placing the directories side by side eliminates traversal conflicts. The subu relies purely on standard POSIX ownership of its dedicated path, ensuring absolute sovereign control over its workspace and preventing permission changes from breaking the directory structure.
@@ -80,15 +90,15 @@
       <h3>The Management Layer</h3>
 
       <p>
-        To grant the master user administrative access without violating the physical layer permissions, the system utilizes <RT-term>ID-mapped mounts</RT-term>.       </p>
+        To grant the master user administrative access without violating the physical layer permissions, the system utilizes <RT·term>ID-mapped mounts</RT·term>.       </p>
 
       <p>
         A system service establishes a mount point within the master user's workspace, pointing to the subu's physical directory:
       </p>
 
-      <RT-code>
+      <RT·code>
         /home/Thomas/subu/Thomas·developer  ->  /home/Thomas·developer
-      </RT-code>
+      </RT·code>
 
       <p>
         The kernel translates the subu's user ID to the master user's user ID in real-time. Through this mount, the master user perceives absolute ownership of all subu files. If the subu locks down a file in the physical layer, the master user retains the ability to read, modify, or repair it through the management layer.
@@ -97,7 +107,7 @@
       <h2>Hardware Access and Audio Seating</h2>
 
       <p>
-        Because subu accounts utilize <RT-code>logind</RT-code> to acquire their own session seats, they inherit strict hardware isolation rules. Modern Linux dynamically assigns hardware ACLs (such as audio and graphics nodes) to the active seated user. The first user to claim the audio socket locks out all other background sessions.
+        Because subu accounts utilize <RT·code>logind</RT·code> to acquire their own session seats, they inherit strict hardware isolation rules. Modern Linux dynamically assigns hardware ACLs (such as audio and graphics nodes) to the active seated user. The first user to claim the audio socket locks out all other background sessions.
       </p>
 
       <p>
@@ -111,11 +121,11 @@
       </p>
 
       <p>
-        If a subu or master user creates an ID-mapped mount directly during their session, the Linux login daemon (<RT-code>systemd-logind</RT-code>) will aggressively terminate the background FUSE processes upon logout, destroying the management layer. 
+        If a subu or master user creates an ID-mapped mount directly during their session, the Linux login daemon (<RT·code>systemd-logind</RT·code>) will aggressively terminate the background FUSE processes upon logout, destroying the management layer. 
       </p>
 
       <p>
-        The system setup process executes independently of user sessions. It queries a central SQLite database to determine the registered subu relationships, constructs the <RT-code>/home/master/subu</RT-code> directory structures, and establishes the ID-mapped mounts. Crucially, the setup process assigns ownership of these mounts to the master account. Because the mounts are created by a boot-level service, they persist indefinitely, surviving all individual user logouts.
+        The system setup process executes independently of user sessions. It queries a central SQLite database to determine the registered subu relationships, constructs the <RT·code>/home/master/subu</RT·code> directory structures, and establishes the ID-mapped mounts. Crucially, the setup process assigns ownership of these mounts to the master account. Because the mounts are created by a boot-level service, they persist indefinitely, surviving all individual user logouts.
       </p>
 
       <h1>User Manual</h1>
@@ -128,32 +138,28 @@
 
       <h3>For the Subu</h3>
       <ul>
-        <li><strong>Home Directory:</strong> <RT-code>/home/Thomas·developer</RT-code></li>
+        <li><strong>Home Directory:</strong> <RT·code>/home/Thomas·developer</RT·code></li>
         <li><strong>Perspective:</strong> The subu operates in a standard Linux environment. Files are owned by the subu. All paths behave normally.</li>
       </ul>
 
       <h3>For the Master User</h3>
       <ul>
-        <li><strong>Primary Workspace:</strong> <RT-code>/home/Thomas</RT-code></li>
-        <li><strong>Subu Management Directory:</strong> <RT-code>/home/Thomas/subu/Thomas·developer</RT-code></li>
-        <li><strong>Perspective:</strong> The master user navigates into the <RT-code>subu</RT-code> directory to administer subordinate accounts. All files within this directory appear to be owned by the master user. Modifying a file here instantly modifies the physical file for the subu.</li>
+        <li><strong>Primary Workspace:</strong> <RT·code>/home/Thomas</RT·code></li>
+        <li><strong>Subu Management Directory:</strong> <RT·code>/home/Thomas/subu/Thomas·developer</RT·code></li>
+        <li><strong>Perspective:</strong> The master user navigates into the <RT·code>subu</RT·code> directory to administer subordinate accounts. All files within this directory appear to be owned by the master user. Modifying a file here instantly modifies the physical file for the subu.</li>
       </ul>
 
       <h2>Backups</h2>
 
       <p>
-        When a master user initiates a backup of their home directory, they must instruct the archiving tool (such as <RT-code>tar</RT-code> or <RT-code>rsync</RT-code>) to respect filesystem boundaries. Passing the <RT-code>--one-file-system</RT-code> flag prevents the backup utility from traversing into the <RT-code>/home/Thomas/subu</RT-code> mounts, avoiding infinite recursion loops and duplicate data capture. The physical subu directories (<RT-code>/home/Thomas·developer</RT-code>) are backed up via separate, independent archive routines.
+        When a master user initiates a backup of their home directory, they must instruct the archiving tool (such as <RT·code>tar</RT·code> or <RT·code>rsync</RT·code>) to respect filesystem boundaries. Passing the <RT·code>--one-file-system</RT·code> flag prevents the backup utility from traversing into the <RT·code>/home/Thomas/subu</RT·code> mounts, avoiding infinite recursion loops and duplicate data capture. The physical subu directories (<RT·code>/home/Thomas·developer</RT·code>) are backed up via separate, independent archive routines.
       </p>
 
-      <script src="style/style_orchestrator.js"></script>
-      <script>
-        window.StyleRT.style_orchestrator();
-      </script>
 
 <h2>Hardware Access and the Virtualization Horizon</h2>
 
       <p>
-        Currently, because subu accounts utilize <RT-code>logind</RT-code> to acquire their own session seats, they inherit strict hardware isolation rules. Modern Linux dynamically assigns hardware ACLs (such as audio and primary graphics nodes) to the active seated user. 
+        Currently, because subu accounts utilize <RT·code>logind</RT·code> to acquire their own session seats, they inherit strict hardware isolation rules. Modern Linux dynamically assigns hardware ACLs (such as audio and primary graphics nodes) to the active seated user. 
       </p>
 
       <p>
@@ -168,6 +174,6 @@
         Fundamentally, hardware virtualization and user process or memory virtualization are identical solutions. The historical separation between a virtual machine and a user namespace represents an incomplete modernization of the operating system user model. The subu architecture views these concepts as a unified system. Future iterations will seek to integrate an existing Linux GPU virtualization layer directly into the user container, granting each subu parallel, isolated access to the underlying hardware substrate.
       </p>
 
-    </RT-article>
+    </RT·article>
   </body>
 </html>
