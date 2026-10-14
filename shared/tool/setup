@@ -14,15 +14,13 @@ umask 0077
 # --------------------------------------------------------------------------------
 # project definition
 
-# actual absolute director path for this script file
-
+# actual absolute directory path for this script file
   script_adp(){
     dirname "$script_afp"
   }
 
-# assume this script is located  $REPO_HOME/tools_shared/authored and work backwards
-# to get $REPO_HOME, etc.
-
+# This script is located at $REPO_HOME/shared/tool/setup.
+# Ascend two directories to discover the absolute $REPO_HOME path.
   REPO_HOME=$(dirname "$(dirname "$(script_adp)")")
   echo REPO_HOME "$REPO_HOME"
 
@@ -35,30 +33,6 @@ umask 0077
   export REPO_HOME PROJECT PROMPT_DECOR
 
 # --------------------------------------------------------------------------------
-# Project wide Tool setup
-#
-
-export VIRTUAL_ENV="$REPO_HOME/shared/linked-project/Python"
-export PYTHON_HOME="$VIRTUAL_ENV"
-unset PYTHONHOME
-
-
-# --------------------------------------------------------------------------------
-# PATH
-#   precedence: last defined, first discovered
-  
-  PATH="$REPO_HOME/shared/authored:$PATH"
-  PATH="$REPO_HOME/shared/made:$PATH"
-  PATH="$REPO_HOME/shared/tool:$PATH"
-
-  # Remove duplicates
-  clean_path() {
-    PATH=$(echo ":$PATH" | awk -v RS=: -v ORS=: '!seen[$0]++' | sed 's/^://; s/:$//')
-  }
-  clean_path
-  export PATH
-
-# --------------------------------------------------------------------------------
 # the following functions are provided for other scripts to use.
 # at the top of files that make use of these functions put the following line:
 #  script_afp=$(realpath "${BASH_SOURCE[0]}")
@@ -69,7 +43,7 @@ unset PYTHONHOME
     basename "$script_afp"
   }
 
-  ## script's dirpath relative to $REPO_HOME
+  ## script's file path relative to $REPO_HOME
   script_fp(){
     realpath --relative-to="${REPO_HOME}" "$script_afp"
   }
@@ -81,43 +55,31 @@ unset PYTHONHOME
 
   export -f script_adp script_fn script_dp script_fp
 
-#--------------------------------------------------------------------------------
-# used by release scripts
-#
+# --------------------------------------------------------------------------------
+# PATH & Plugin Sourcing
+#   Each addition goes to the front, so the last added is searched first.
+#   Resulting search order, most specific first:
+#     shared/authored, shared/made, shared/tool, project dependencies, the rest.
+#   The top-level setup then puts the role's tool directory in front of these.
 
-  install_file() {
-    if [ "$#" -lt 3 ]; then
-      echo "env::install_file usage: install_file <source1> <source2> ... <target_dir> <permissions>"
-      return 1
+  # Project dependencies: source each .init file. Each prepends its own entries.
+  for init_file in "$REPO_HOME/shared/project-dependency/"*.init; do
+    if [[ -f "$init_file" ]]; then
+      source "$init_file"
     fi
+  done
 
-    perms="${@: -1}"         # Last argument is permissions
-    target_dp="${@: -2:1}"   # Second-to-last argument is the target directory
-    sources=("${@:1:$#-2}")  # All other arguments are source files
+  PATH="$REPO_HOME/shared/tool:$PATH"
+  PATH="$REPO_HOME/shared/made:$PATH"
+  PATH="$REPO_HOME/shared/authored:$PATH"
 
-    if [ ! -d "$target_dp" ]; then
-      echo "env::install_file no install done: target directory '$target_dp' does not exist."
-      return 1
-    fi
-
-    for source_fp in "${sources[@]}"; do
-      if [ ! -f "$source_fp" ]; then
-        echo "env::install_file: source file '$source_fp' does not exist."
-        return 1
-      fi
-
-      target_file="$target_dp/$(basename "$source_fp")"
-
-      if ! install -m "$perms" "$source_fp" "$target_file"; then
-        echo "env::install_file: Failed to install $(basename "$source_fp") to $target_dp"
-        return 1
-      else
-        echo "env::install_file: installed $(basename "$source_fp") to $target_dp with permissions $perms"
-      fi
-    done
+  # Remove duplicates, keeping the first occurrence
+  clean_path() {
+    PATH=$(echo ":$PATH" | awk -v RS=: -v ORS=: '!seen[$0]++' | sed 's/^://; s/:$//')
   }
+  clean_path
 
-  export -f install_file
+  export PATH
 
 # --------------------------------------------------------------------------------
 # closing
@@ -125,4 +87,3 @@ unset PYTHONHOME
   if [[ -z "$ENV" ]]; then
     export ENV=$(script_fp)
   fi
-

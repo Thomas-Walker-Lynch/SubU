@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+script_afp=$(realpath "${BASH_SOURCE[0]}")
+
+set -euo pipefail
+
+if [ -z "${REPO_HOME:-}" ]; then
+  echo "emacs-sync:: error: REPO_HOME is not set. Source a setup environment first."
+  exit 1
+fi
+
+if ! command -v emacsclient >/dev/null 2>&1; then
+  echo "emacs-sync:: error: emacsclient is not installed or not in PATH."
+  exit 1
+fi
+
+# Push variables to the Emacs global environment
+emacsclient --eval "(setenv \"REPO_HOME\" \"$REPO_HOME\")" > /dev/null
+emacsclient --eval "(setenv \"PROJECT\" \"$PROJECT\")" > /dev/null
+
+if [ -n "${ROLE:-}" ]; then
+  emacsclient --eval "(setenv \"ROLE\" \"$ROLE\")" > /dev/null
+fi
+
+# Sync the PATH so Emacs subprocesses find the local tools
+emacsclient --eval "(setenv \"PATH\" \"$PATH\")" > /dev/null
+
+# Update exec-path for native Emacs executable resolution
+emacsclient --eval "(setq exec-path (append (parse-colon-path \"$PATH\") (list exec-directory)))" > /dev/null
+
+echo "Emacs environment synchronized for project: $PROJECT"

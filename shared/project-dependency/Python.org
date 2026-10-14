@@ -1,0 +1,38 @@
+#+TITLE: Python Installation Guide
+#+AUTHOR: Project Administrator
+
+This project requires a dedicated Python environment. The configuration plugin (`shared/project-dependency/Python.init`) was written targeting Python 3.12.3, though the architecture does not rely on any known version-dependent features. 
+
+* 1. Download and Extract
+Download the Python source code and extract it as a sibling to the main project directory. Assuming you are at the top level of your project workspace:
+
+#+begin_src bash
+cd ../
+wget https://www.python.org/ftp/python/3.12.3/Python-3.12.3.tgz
+tar -xzf Python-3.12.3.tgz
+cd Python-3.12.3
+#+end_src
+
+* 2. Build the Environment
+Compile the Python binaries in place. Setting the installation prefix to the current directory isolates the build, and enabling shared libraries ensures compatibility with C extensions.
+
+#+begin_src bash
+./configure --prefix="$(pwd)" --enable-optimizations --enable-shared
+make -j8
+make install
+#+end_src
+
+* 3. Link the Project
+
+Python-3.12.3 is linked to a Harmony derived project by default.  
+
+See administrator/document/how-to_add-project-dependency.html for details about linking a project, if you want to check the setup.
+
+If you are installing a different version, then at least the Python-3.12.3 version project linking is there as a good example.
+
+Project linking is not difficult, make a sym link to `project/<dependency>`, and then add an init file, as described in administrator/document/how-to_add-project-dependency.html. The 'project' in the link is literal.
+
+
+
+
+

@@ -1,0 +1,16 @@
+# -*- mode: sh; sh-shell: bash; -*-
+# init files are bash script
+
+# Python.init
+# --------------------------------------------------------------------------------
+# Ensure the local Python build is prioritized in the PATH.
+# The user must establish the Python-3.12.3 symlink for this to activate.
+
+if [[ -d "$REPO_HOME/shared/project-dependency/Python-3.12.3/bin" ]]; then
+  PATH="$REPO_HOME/shared/project-dependency/Python-3.12.3/bin:$PATH"
+else
+  # Optional: Issue a quiet warning for the administrator role
+  if [[ "$ROLE" == "administrator" ]]; then
+     echo "Notice: Local Python-3.12.3 bin not found. Using system Python."
+  fi
+fi

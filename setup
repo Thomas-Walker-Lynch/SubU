@@ -1,73 +1,67 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 # setup - enter a project role environment
-# (must be sourced)
 
-script_afp=$(realpath "${BASH_SOURCE[0]}")
-if [ "${BASH_SOURCE[0]}" == "${0}" ]; then
-  echo "${script_afp}:: This script must be sourced, not executed."
-  exit 1
-fi
+import os
+import sys
+import argparse
+import tempfile
 
-project_roles="administrator consumer developer tester"
+PROJECT_ROLES = ["administrator", "consumer", "developer", "tester"]
 
-print_usage(){
-  echo "usage: . setup <role>"
-  echo "known roles: ${project_roles}"
-}
+def main():
+    parser = argparse.ArgumentParser(
+        description="Enter a project role environment by spawning an isolated subshell."
+    )
+    parser.add_argument("role", choices=PROJECT_ROLES, help="The project role to assume.")
+    args = parser.parse_args()
 
-if [ -z "${1:-}" ] || [ "${1}" == "-h" ] || [ "${1}" == "--help" ]; then
-  print_usage
-  return 0
-fi
+    env = os.environ.copy()
 
-role_is_valid=false
-for r in ${project_roles}; do
-  if [ "${1}" == "${r}" ]; then
-    role_is_valid=true
-    break
-  fi
-done
+    # Python-domain logic: Variables and Paths
+    repo_home = env.get("REPO_HOME", os.getcwd())
+    role = args.role
+    role_home = os.path.join(repo_home, role)
+    tool_dir = os.path.join(role_home, "tool")
+    setup_file = os.path.join(role, "tool", "setup")
 
-if [ "${role_is_valid}" == "false" ]; then
-  echo "setup: unrecognized role or option '${1}'"
-  print_usage
-  return 1
-fi
+    env["ROLE"] = role
+    env["ROLE_HOME"] = role_home
+    env["SETUP"] = setup_file
 
-# setup the project
-#
-  source shared/tool/setup
-  if [[ -f "shared/authored/setup" ]]; then
-    source shared/authored/setup
-  fi
+    print(f"ROLE_HOME {role_home}")
 
-# setup tools
-#
-  export PYTHON_HOME="${REPO_HOME}/shared/linked-project/Python"
-  if [[ ":${PATH}:" != *":${PYTHON_HOME}/bin:"* ]]; then
-    export PATH="${PYTHON_HOME}/bin:${PATH}"
-  fi
+    # Python-domain logic: Directory validation
+    if not os.path.isdir(role):
+        print(f"setup: failed to locate directory for role '{role}'")
+        sys.exit(1)
 
-  RT_gcc="${REPO_HOME}/shared/linked-project/RT_gcc/release"
-  if [[ ":${PATH}:" != *":${RT_gcc}:"* ]]; then
-    export PATH="${RT_gcc}:${PATH}"
-  fi
+    # Bash-domain logic: The rcfile only handles operations Python cannot inherit 
+    # (sourcing bash functions) and performs the directory change internally to 
+    # guarantee the shared scripts are sourced from the project root.
+    bash_logic = [
+        'if [[ -f ~/.bashrc ]]; then source ~/.bashrc; fi',
+        'if [[ -f "shared/tool/setup" ]]; then source "shared/tool/setup"; fi',
+        'if [[ -f "shared/authored/setup" ]]; then source "shared/authored/setup"; fi',
+        '# the role tool directory is searched before everything the shared setup added',
+        f'PATH="{tool_dir}:$PATH"; export PATH',
+        f'cd "{role}"',
+        'if [[ -f "tool/setup" ]]; then',
+        '    source "tool/setup"',
+        f'    echo "in environment: {setup_file}"',
+        'else',
+        f'    echo "not found: {setup_file}"',
+        'fi',
+        'if [[ -n "${INSIDE_EMACS}" ]] && command -v env_to_emacs >/dev/null 2>&1; then',
+        '    env_to_emacs',
+        'fi',
+        'rm -f "${BASH_SOURCE[0]}"'
+    ]
 
-# setup the role
-#
-  export ROLE="${1}"
+    fd, rcfile_path = tempfile.mkstemp(suffix="-rt-setup.sh")
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(bash_logic) + "\n")
 
-  tool="${REPO_HOME}/${ROLE}/tool"
-  if [[ ":${PATH}:" != *":${tool}:"* ]]; then
-    export PATH="${tool}:${PATH}"
-  fi
+    os.execvpe("bash", ["bash", "--rcfile", rcfile_path], env)
 
-  export SETUP="${ROLE}/tool/setup"
-
-  cd "${ROLE}" || return 1
-  if [ -f "tool/setup" ]; then
-    source "tool/setup"
-    echo "in environment: ${SETUP}"
-  else
-    echo "not found: ${SETUP}"
-  fi
+if __name__ == "__main__":
+    main()
