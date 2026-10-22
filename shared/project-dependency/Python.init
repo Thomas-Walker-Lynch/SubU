@@ -3,14 +3,23 @@
 
 # Python.init
 # --------------------------------------------------------------------------------
-# Ensure the local Python build is prioritized in the PATH.
-# The user must establish the Python-3.12.3 symlink for this to activate.
+# Put the project's Python build at the front of PATH, but only when it runs.
+#
+# Every '#!/usr/bin/env python3' script the person runs, their own tools
+# included, takes the first python3 on PATH. A build that cannot start, for
+# example one that lost its libpython after its directory moved, must not be
+# put there, or all of those scripts fail with it. The test runs the
+# interpreter once with an empty program.
 
-if [[ -d "$REPO_HOME/shared/project-dependency/Python-3.12.3/bin" ]]; then
-  PATH="$REPO_HOME/shared/project-dependency/Python-3.12.3/bin:$PATH"
-else
-  # Optional: Issue a quiet warning for the administrator role
+python_dp="$REPO_HOME/shared/project-dependency/Python-3.12.3"
+if [[ ! -e "$python_dp" ]]; then
   if [[ "$ROLE" == "administrator" ]]; then
-     echo "Notice: Local Python-3.12.3 bin not found. Using system Python."
+    echo "Python.init: no $python_dp; using the system python3"
   fi
+elif "$python_dp/bin/python3" -c '' 2>/dev/null; then
+  PATH="$python_dp/bin:$PATH"
+else
+  echo "Python.init: $python_dp/bin/python3 does not run; using the system python3" >&2
+  echo "Python.init: run it directly to see why, and see Python.org beside this file" >&2
 fi
+unset python_dp

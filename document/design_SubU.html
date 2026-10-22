@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>SubU 5.0 Design</title>
+    <script>
+      {
+        let dirpr_library = null;
+        try{ dirpr_library = localStorage.getItem("RT.dirpr_library"); }catch(e){}
+        window.RT = window.RT || {};
+        RT.dirpr_library = RT.dirpr_library || dirpr_library || "https://style.ReasoningTechnology.com/Manuscript";
+        document.write('<script src="' + RT.dirpr_library + '/Core/RT-Manuscript_make.js"><\/script>');
+      }
+    </script>
+    <script>
+      window.RT.theme_preference('inverse_wheat');
+      window.RT.load('Layout/paginate');
+      window.RT.load('Layout/article_tech_ref');
+      window.RT.load('Element/theme_selector');
+    </script>
+  </head>
+  <body>
+    <RT·theme-selector></RT·theme-selector>
+    <RT·article>
+      <RT·title
+        author="Thomas Walker Lynch"
+        date="2026-10-16"
+        title="SubU 5.0 Design">
+      </RT·title>
+
+      <RT·TOC level="1"></RT·TOC>
+
+      <h1>Purpose</h1>
+
+      <p>
+        This document gives the design of SubU as it is currently envisioned, for the standard numbered 5.0. It covers the users, the storage that carries them, the systems they are attached to, the databases, the server that changes accounts and mounts, the programs around the server, and login. Where a decision is still open it is marked as open. The features planned for standard 6.0 are listed at the end, with the path from 5.0 to them.
+      </p>
+
+      <p>
+        <RT·code>document/doc_2.html</RT·code> gives the reasoning behind the flat home directories and the mapped views. This document builds on it.
+      </p>
+
+      <h1>Terms</h1>
+
+      <ul>
+        <li><RT·term>user</RT·term>: a Unix account, with its own uid, home directory, processes and sessions.</li>
+        <li><RT·term>MasU</RT·term>: master user. A user that owns other users. Plural MasUs.</li>
+        <li><RT·term>SubU</RT·term>: subordinate user. A user owned by a MasU. Plural SubUs. A SubU may itself be the MasU of further SubUs, so the users owned through one person form a tree.</li>
+        <li><RT·term>storage</RT·term>: a persistent storage device carrying users' data, such as the SSD inside a laptop or an encrypted USB drive. Its root is the directory it is mounted at. A storage may be moved between machines.</li>
+        <li><RT·term>SubU dir</RT·term>: the directory <RT·code>&lt;storage root&gt;/home/SubU</RT·code>, holding the storage database and the users' homes. On the disk a system runs from it is <RT·code>/home/SubU</RT·code>. SubU_admin is given a SubU dir to name a storage.</li>
+        <li><RT·term>system</RT·term>: an installed, running Linux, with its own <RT·code>/etc/passwd</RT·code>, its own uid numbering, and its own <RT·code>/home</RT·code>, into which the users kept on attached storage are mounted.</li>
+        <li><RT·term>storage database</RT·term>: the SQLite database in a SubU dir, describing the users kept on that storage.</li>
+        <li><RT·term>system database</RT·term>: the SQLite database at <RT·code>/var/lib/SubU/system.sqlite3</RT·code>, a system's own record. Its system map is the authority for which storage users have accounts on the system.</li>
+        <li><RT·term>database uuid</RT·term>: the random identifier a storage database is given when it is made. It names the database, not the storage: a copy of the database carries it too. It is not the storage uuid that a file system is given when it is formatted, which SubU does not use.</li>
+        <li><RT·term>system uuid</RT·term>: the random identifier a system database is given when it is made, which names the system.</li>
+        <li><RT·term>database uid</RT·term>: a user's uid in a storage database's own numbering. The user's files on the storage carry it.</li>
+        <li><RT·term>system uid</RT·term>: a user's uid on a system, in <RT·code>/etc/passwd</RT·code> there.</li>
+        <li><RT·term>user specifier</RT·term>: the name of a user in one place: <RT·code>system &lt;host name&gt; &lt;account&gt;</RT·code> for an account on a system, or <RT·code>storage &lt;SubU dir&gt; &lt;user&gt;</RT·code> for a user of a storage database.</li>
+        <li><RT·term>same user</RT·term>: two user specifiers that name one person's user in two places. The system map records which accounts are the same users as which storage users.</li>
+        <li><RT·term>view</RT·term>: an idmapped mount through which one user sees another user's files as its own.</li>
+        <li><RT·term>server</RT·term>: the program, running as root, that alone changes accounts, databases and mounts.</li>
+        <li><RT·term>unmanaged user</RT·term>: a user that SubU does not manage, such as <RT·code>root</RT·code>, or an account made with <RT·code>useradd</RT·code> by hand.</li>
+      </ul>
+
+      <h1>Users and names</h1>
+
+      <h2>Account names</h2>
+
+      <p>
+        A SubU's account name is its MasU's account name, the middle dot (U+00B7, written <RT·code>·</RT·code>), and the SubU's own short name: <RT·code>Thomas·developer</RT·code>, and below it <RT·code>Thomas·developer·scratch</RT·code>. The middle dot may not appear in a short name, so a full name divides in exactly one way, and the conventional characters <RT·code>_</RT·code>, <RT·code>-</RT·code> and <RT·code>.</RT·code> remain free for use in names.
+      </p>
+
+      <p>
+        The middle dot lies outside the POSIX portable character set. Account creation needs the <RT·code>--badname</RT·code> flag of <RT·code>useradd</RT·code>, and a tool that checks user names against the portable set needs its check widened. In UTF-8 the middle dot is two bytes, and a user name may currently be at most 32 bytes. That limit is set in user space, by the fixed name field of the <RT·code>utmp</RT·code> login records and by <RT·code>useradd</RT·code>, not by the kernel, which knows users only by uid. pkg-config prints paths holding the middle dot in a form that is not valid UTF-8; builds that pass such paths through pkg-config need the workaround given in <RT·code>shared/project-dependency/Python.org</RT·code>.
+      </p>
+
+      <h2>Identity of a user</h2>
+
+      <p>
+        A user has an identity in its database, and, when the storage the database is on is attached to a running system, an extended identity on that system.
+      </p>
+
+      <p>
+        In its database, a user is identified by the database uuid together with the user's database uid. The user's files on the storage are owned by that database uid, and a root user who mounts the storage by hand, without SubU, sees that database uid on them. This pair is all the database needs to identify the user.
+      </p>
+
+      <p>
+        On a running system, the user also needs a uid in the system's numbering, because that numbering is the one <RT·code>/etc/passwd</RT·code> and the kernel use there. A map row gives it. The row pairs the user's identity in its database with a uid on the system. The user's extended identity is its identity in its database, joined through the map to the system.
+      </p>
+
+      <h1>Storage and systems</h1>
+
+      <h2>Storage layout</h2>
+
+      <p>
+        Every storage has the same layout under its root, where the root is the directory the storage is mounted at: <RT·code>/</RT·code> for the disk a system runs from, or a mount point such as <RT·code>/mnt/Eagle</RT·code> for a drive plugged in. Its SubU dir is <RT·code>home/SubU</RT·code> under the root, so <RT·code>/home/SubU</RT·code> or <RT·code>/mnt/Eagle/home/SubU</RT·code>.
+      </p>
+
+      <RT·code>
+        home/SubU/database.sqlite3          the storage database
+        home/SubU/user_data/&lt;name&gt;      the home directory of each user carried, by account name
+        home/&lt;other&gt;                      anything else, such as the homes of unmanaged users
+      </RT·code>
+
+      <p>
+        Everything SubU keeps on a storage is under <RT·code>home/SubU</RT·code>, so the storage can carry other things beside it, and the storage database sits with the data it describes. <RT·code>user_data</RT·code> is the source of the users' data; on a running system each user's directory in it is reached through an idmapped mount at <RT·code>/home/&lt;name&gt;</RT·code>. A user named <RT·code>database</RT·code> cannot collide with the database, because the two are at different levels. The account name <RT·code>SubU</RT·code> is reserved, because on a running system <RT·code>/home/SubU</RT·code> holds SubU's own files.
+      </p>
+
+      <p>
+        On the disk a system runs from, SubU's files are therefore under <RT·code>/home</RT·code>, beside the homes of unmanaged users. Distributions already keep <RT·code>/home</RT·code> apart from the operating system: openSUSE on btrfs makes it a subvolume outside the root snapshots, so a rollback of the root leaves it alone, and installers on other file systems commonly offer it as a partition of its own, kept when the system is reinstalled. SubU's files inherit this without SubU depending on any file system. Were they on the root file system, a rollback of the root would roll back the storage database and the users' files with it.
+      </p>
+
+      <p>
+        A tool that walks <RT·code>/home</RT·code> sees each mounted user's files twice: at <RT·code>/home/&lt;name&gt;</RT·code>, and at <RT·code>/home/SubU/user_data/&lt;name&gt;</RT·code>. A bind mount of the same file system reports the same device number, so options such as <RT·code>rsync -x</RT·code> do not stop at the mount. A backup of <RT·code>/home</RT·code> excludes one of the two.
+      </p>
+
+      <h2>Every storage is the same</h2>
+
+      <p>
+        A storage is a repository of user data, whether it is built into the machine or plugged in, and a machine may have several. The SSD inside a laptop is attached at boot, before any login, in the same way a USB drive is attached when it is plugged in. Taken out of the laptop and put into a USB enclosure, the same SSD can be attached to another machine, and its users used there.
+      </p>
+
+      <h2>Copies</h2>
+
+      <p>
+        The database uuid names the database, not the storage it is on. A copy of <RT·code>home/SubU</RT·code>, made for a backup or an archive, carries the same database uuid, and is the same database until one of the two is changed. Because a SubU dir can be anywhere, an archive kept at <RT·code>/&lt;storage name&gt;/&lt;date&gt;/home/SubU</RT·code> can be attached by giving that SubU dir.
+      </p>
+
+      <p>
+        A storage moved between systems, plugged into a desktop, then a laptop, then the desktop again, is the ordinary case, and must attach without question. A copy that was used apart from its original must not be taken for it. The record of transactions tells the two apart, as git's history does:
+      </p>
+
+      <ul>
+        <li>Every attach and every detach is a transaction in the storage database. Two copies used apart therefore have different heads, even when no user was made or changed on either.</li>
+        <li>At each attach and detach, the system records in its <RT·code>storage_seen</RT·code> table the storage's head: its series number and hash.</li>
+        <li>At the next attach, the storage's record must hold that head. If it does, the storage is the one the system saw, moved on since, perhaps on another system, and it is attached. If it does not, the storage is an older copy, or a copy that went another way, and nothing is mounted unless the superuser gives the keyword <RT·code>accept-history</RT·code>.</li>
+        <li>Each row of the system map also records the storage's head when the row was made. A storage whose record does not hold it is not the storage that was mapped, and that user is not mounted.</li>
+      </ul>
+
+      <p>
+        The two heads are witnesses of different things. The head in <RT·code>storage_seen</RT·code> moves: it is where this system last saw the storage. A storage worked on at the desktop, then the laptop, then the desktop again, has a record that runs straight through: the desktop's last head is in it, followed by the laptop's transactions, and it attaches at the desktop without question. The system does not care how far along the storage has gone, only that it has not gone back, or sideways. The head in a system map row stays where it was put: it is the storage as it was when its user was made the same user as an account here, and every later state of that storage descends from it. It matters for a storage this system has not attached since the row was made, where <RT·code>storage_seen</RT·code> has nothing to say: a copy split off before the mapping, taken for the storage that was mapped, does not hold that head, and its user is not mounted.
+      </p>
+
+      <p>
+        A storage whose record does not hold the head this system last saw has gone back, to an older copy, or sideways, to a branch: two copies each changed after they parted. In 5.0 the superuser chooses one branch with <RT·code>accept-history</RT·code>, and it becomes the line this system follows; the other is set aside. Bringing the two branches together again is a merge. For the database itself, a merge replays the transactions of one branch onto the other where they do not conflict. For the users' files, it is the integration problem of 7.0, of which merging two branches of one storage is the simplest case.
+      </p>
+
+      <p>
+        These checks establish continuity, not authenticity. The hashes are not secret: they are in the storage database and the system database, and anyone who can read either can copy them into a fabricated database. Authenticity needs a secret, which is the subject of the keys planned for 6.0. Attach is also to refuse a database whose database uuid is already attached from another SubU dir; that check is not yet built.
+      </p>
+
+      <h2>Uids are a database's own</h2>
+
+      <p>
+        The uids in a database are that database's own numbering. Files on the storage carry them. A database never adopts the uids of a system it is attached to; its users are mounted onto the system through idmapped mounts, which translate the database's uids to the system's as the files are used. A storage can therefore be moved from machine to machine without changing its files.
+      </p>
+
+      <p>
+        A database gives out database uids counting down from 1999999999, while systems give out system uids counting up from low numbers. A database uid is therefore not also the system uid of an account, and a file on a storage, seen without its mount, does not appear to belong to a system user it does not belong to, except in the cases given under Limits of uids. The band 1879048192 to 2147352575 is left unused by systemd's allocation of uids, so a database has about 120 million database uids before it leaves the band. A user brought into SubU from an existing account can keep its existing uid, with the keyword <RT·code>uid</RT·code> of <RT·code>user make</RT·code>; for that user the coincidence remains, behind the root-only directories of <RT·code>home/SubU</RT·code>.
+      </p>
+
+      <p>
+        A database never reuses a database uid. A database uid given up by a deallocated SubU stays retired, because files carrying it may remain on the storage, in a backup, or on another storage they were copied to.
+      </p>
+
+      <h2>Limits of uids</h2>
+
+      <p>
+        Two numberings meet on a running system: database uids, on the files of storage, and system uids, in <RT·code>/etc/passwd</RT·code>. Each has limits, set by different parties, and each limit is checked where the party that sets it is known.
+      </p>
+
+      <p>
+        <em>The kernel.</em> Linux uids are 32 bits. 4294967295 is (uid_t)−1 and means no uid; 65534 is the overflow uid shown for a uid that cannot be mapped; neither is given out. A database uid is never used as a system uid. At run time it meets only the idmapped mount, which accepts any uid below 4294967295, so the kernel's limit is the same on every system and a storage moved between systems is unaffected by it.
+      </p>
+
+      <p>
+        <em>The file system.</em> ext4, xfs and btrfs store 32-bit uids. JFFS2 and Minix store 16 bits, and FAT and exFAT store none; such storage cannot carry SubU users. This limit belongs to the storage and travels with it, so it is checked once, when the storage is made: <RT·code>storage make</RT·code> sets the owner of a test file to the first database uid, reads it back, and refuses the storage if the two differ. That check is not yet built.
+      </p>
+
+      <p>
+        <em>The system.</em> <RT·code>UID_MAX</RT·code> in <RT·code>/etc/login.defs</RT·code> bounds only the uids <RT·code>useradd</RT·code> picks on its own; SubU gives <RT·code>useradd</RT·code> the system uid. A system's range of system uids is set by <RT·code>system make</RT·code>, 2000 to 59999 by default, and is the system's own. A storage moved to a system with a smaller range keeps its database uids, since they never become that system's uids; the smaller range limits only how many of the storage's users the system can give accounts to, and <RT·code>introduce</RT·code> reports when the range is used up.
+      </p>
+
+      <p>
+        <em>Where the two numberings can still meet.</em> A database uid equals the system uid of some account when:
+      </p>
+
+      <ul>
+        <li>a user was brought in with the keyword <RT·code>uid</RT·code> of <RT·code>user make</RT·code>, keeping its existing uid. This is deliberate.</li>
+        <li>a system's own range reaches into the band. <RT·code>system make</RT·code> refuses a range that reaches 1879048192.</li>
+        <li>accounts from outside SubU have uids in the band. A directory service mapping Active Directory accounts through SSSD gives out slices of 200000 uids up to 2000200000 by default, which is inside the band, and container uid ranges in <RT·code>/etc/subuid</RT·code> can be set anywhere.</li>
+        <li>a database has given out nearly all its band, after about 120 million users. <RT·code>user make</RT·code> refuses below 1879048192. Should a database ever need more, a later standard chooses the next band and records it in the database, so that databases already made keep theirs.</li>
+      </ul>
+
+      <p>
+        At attach, the database uids of the storage are to be compared with the system uids in use, from <RT·code>getent passwd</RT·code>, which includes directory services, and from <RT·code>/etc/subuid</RT·code>. Each coincidence is logged with the account that would appear to own the raw files. A coincidence is not refused: through the mounts each user sees its own files correctly, and the raw files are behind the root-only directories of <RT·code>home/SubU</RT·code>. It is reported because a tool that works by uid on the raw files, run as root, would treat them as that account's. This check is not yet built.
+      </p>
+
+      <p>
+        <em>Tools that copy files.</em> Backups and archives copy uids with the files. The old ustar format of tar holds uids up to 2097151, and the odc format of cpio up to 262143; database uids do not fit. GNU tar's default format, the POSIX pax format, cpio's newc format, rsync and btrfs send hold 32-bit uids, and archives of SubU storage use one of them.
+      </p>
+
+      <h2>The system</h2>
+
+      <p>
+        A system is a party in its own right, with its own database. Its system database, at <RT·code>/var/lib/SubU/system.sqlite3</RT·code>, holds its system uuid, the range of system uids SubU gives out, the system map, and the limits. The system owns the uid numbering of <RT·code>/etc/passwd</RT·code>: it alone decides which storage users get accounts on it and with which system uids, so that record is its own and not any storage's. A storage plugged in can claim nothing; what it names in its own database grants it no account.
+      </p>
+
+      <p>
+        A system never reuses a system uid. Its own disk keeps files carrying system uids, in <RT·code>/tmp</RT·code>, <RT·code>/var/spool</RT·code>, crontabs and logs, and a reused uid would hand them to another user. The system map therefore keeps every row it has held, retired rows included, and <RT·code>is-same-user</RT·code> with <RT·code>make-account</RT·code> never gives an account a system uid that appears in it.
+      </p>
+
+      <p>
+        The system database is under <RT·code>/var</RT·code>, which holds the state programs keep, and not under <RT·code>/etc</RT·code>, which holds configuration. A system whose root file system is snapshotted, as openSUSE's is, keeps <RT·code>/var</RT·code> outside the snapshots. A rollback of the root then rolls back <RT·code>/etc/passwd</RT·code> and leaves the system map as it was: an account made after the snapshot is lost from <RT·code>/etc/passwd</RT·code>, but its system uid stays recorded, is not given out again, and the account can be made again from the system map. Were the system database under <RT·code>/etc</RT·code>, the rollback would also forget the system uid, and it could be given to another user while files carrying it remained under <RT·code>/var</RT·code>.
+      </p>
+
+      <h2>Deleting storage</h2>
+
+      <p>
+        <RT·code>SubU_admin storage delete &lt;SubU dir&gt;</RT·code> undoes, on this system, what SubU did for the users of the storage database, then deletes the SubU dir. It makes every check first, and a failed check changes nothing:
+      </p>
+
+      <ul>
+        <li>the storage database's notes name no other system, since that system's map would name a database that no longer exists, unless the keyword <RT·code>forget-other-systems</RT·code> is given;</li>
+        <li>no account that is the same user as one of its users is logged in;</li>
+        <li>nothing is mounted inside the SubU dir;</li>
+        <li>the SubU dir holds only the storage database and <RT·code>user_data</RT·code>, and <RT·code>user_data</RT·code> holds only homes of the database's users;</li>
+        <li>homes that hold files are deleted only when the keyword <RT·code>delete-user-data</RT·code> is given.</li>
+      </ul>
+
+      <p>
+        For each row of this system's map naming one of its users, it then unmounts the home, deletes the mount point attach made, recognized as an empty directory owned by root with mode 0000, deletes the account and its group when SubU made them, keeps an adopted account, and retires the row. Last it deletes <RT·code>user_data</RT·code>, the storage database and the SubU dir. Run a second time, it finds nothing to delete and says so. <RT·code>system delete</RT·code> deletes the system database, and is refused while any row of the system map is in use.
+      </p>
+
+      <h1>The databases</h1>
+
+      <p>
+        There are two kinds of database, with two schemas, <RT·code>schema_storage.sql</RT·code> and <RT·code>schema_system.sql</RT·code>. Both keep the same record of changes, described below, and are checked the same way. Each fact is kept by the party with authority over it: a storage database keeps its users and their database uids; the system database keeps which of those users have accounts on the system.
+      </p>
+
+      <h2>Storage database tables</h2>
+
+      <ul>
+        <li><RT·code>identity</RT·code>: the database uuid, the series number, the head hash, and when the database was made. One row. A storage database has no name for people. A name would travel with every copy of the database, and a name taken from the storage it was made on would come to mislead once the database was copied elsewhere. A database is shown by its database uuid, its series number, its head hash and the time of its last change, and log lines give the first eight digits of the database uuid.</li>
+        <li><RT·code>standard</RT·code>: the SubU standards this database follows, one row each. Currently <RT·code>5.0</RT·code>.</li>
+        <li><RT·code>user</RT·code>: one row per user carried: database uid, user name, the database uid and user name of its MasU, state (<RT·code>active</RT·code>, <RT·code>deprecated</RT·code>, <RT·code>deallocated</RT·code>), and times. The MasU's database uid is empty for a user at the top of a tree, or one whose MasU is carried by another database.</li>
+        <li><RT·code>database_uid</RT·code>: every database uid this database has ever given out, with whether it is in use or retired.</li>
+        <li><RT·code>system_seen</RT·code>: the systems that have seen this database: those on which a user of it has been made the same user as an account, with when that was first and when it was last attached or detached there. For the owner of the storage, and for <RT·code>storage delete</RT·code>, which will not leave a system mapping a database that no longer exists. Never authority.</li>
+        <li><RT·code>acquaintance_database</RT·code> and <RT·code>same_user_database</RT·code>: other storage databases this one knows, and which of their users are the same users as users here, by database uid. Written into both databases. Not used in 5.0.</li>
+        <li><RT·code>transaction_log</RT·code>: the record of every change, described below.</li>
+      </ul>
+
+      <h2>System database tables</h2>
+
+      <ul>
+        <li><RT·code>identity</RT·code>: the system uuid, the series number, the head hash, and when the database was made. One row. The system is shown by its host name, read when it is shown, so a name for people is not kept.</li>
+        <li><RT·code>standard</RT·code>: as for a storage database.</li>
+        <li><RT·code>system_uid_range</RT·code>: the first and last system uid SubU gives an account it makes. One row.</li>
+        <li><RT·code>system_map</RT·code>: one row for each time an account has been made the same user as a storage user: the system uid and gid, the account name, the database uuid and database uid, whether SubU made the account or adopted one that existed, whether the row is in use or retired, when, and the storage database's series number and head when the row was made. At most one row in use names a given system uid, and at most one names a given storage user. A row is retired, never deleted. An adopted account may be made the same user again once its row is retired; a system uid that appears in any row is never given to an account SubU makes.</li>
+        <li><RT·code>storage_seen</RT·code>: for each storage database, its series number and head when this system last attached or detached it.</li>
+        <li><RT·code>user_limit</RT·code>: the number of SubUs each account may have below it, by system uid. An account with no row may have none.</li>
+        <li><RT·code>transaction_log</RT·code>: the record of every change.</li>
+      </ul>
+
+      <h2>Series number and hash chain</h2>
+
+      <p>
+        A transaction is one change to one database: the SQL statements a command of <RT·code>SubU_admin</RT·code>, or a request to the server, runs against that database, recorded together. A command can make transactions in both kinds of database; <RT·code>is-same-user</RT·code> makes one in the storage database and one in the system database.
+      </p>
+
+      <p>
+        Each transaction increments the series number, and records its statements, a description, a random number, and a hash. The hash is taken over the previous transaction's hash, the series number, the description, the statements, and the random number. The first transaction follows a hash made from the database's kind and uuid, so no two databases' chains can coincide, and a record cannot be moved from one database into another. The <RT·code>identity</RT·code> row holds the series number and hash of the last transaction, the head of the chain.
+      </p>
+
+      <p>
+        The chain gives order, integrity and identity of history. It does not give authenticity. Anyone holding a database can extend its chain, or rewrite it and compute new hashes. What a rewrite cannot do is keep the hashes that others have already seen: a system that remembers a head, or a system map row that recorded one, finds the rewritten record does not hold it. Each party that remembers a head is a witness. A storage database and the system database are readable by root only, so the record is the database's own history, as a git repository's history is, rather than a log for its users to read.
+      </p>
+
+      <p>
+        The series number orders a database's history; the hash identifies it. A copy that is used goes on to make its own transactions, with the same series numbers as the original's and different contents. Their hashes differ, because the random number differs even when the same change is made to both. So two databases with the same database uuid and series number but different heads are known to have forked, and neither is taken to be the other.
+      </p>
+
+      <p>
+        Times recorded in a database are for people to read. They are not authoritative, because clocks differ between machines. The series number is authoritative.
+      </p>
+
+      <h2>Standards</h2>
+
+      <p>
+        A program that opens a database first reads its <RT·code>standard</RT·code> table, and refuses a database that follows no standard the program follows. A database may list more than one standard, during a change from one to the next.
+      </p>
+
+      <h2>Fallback tools</h2>
+
+      <p>
+        The databases can be built by hand from SQL scripts kept in the project. They are the means of starting over if a database is lost or damaged.
+      </p>
+
+      <ul>
+        <li>A schema script builds an empty database where there was none.</li>
+        <li>Initialization scripts put in the starting data: the identity row, the standard, existing users, the uid range, and limits.</li>
+        <li>Scripts with their data written into them can write the system map rows for existing accounts, for a system whose system database is lost.</li>
+      </ul>
+
+      <h1>Same users</h1>
+
+      <p>
+        A user's directory on a storage, <RT·code>home/SubU/user_data/&lt;name&gt;</RT·code>, carries only its database uid. What lets it be used on a system is a row of that system's map, saying that an account there is the same user as the storage user. The superuser states it:
+      </p>
+
+      <RT·code>
+        SubU_admin is-same-user system &lt;host name&gt; &lt;account&gt; storage &lt;SubU dir&gt; &lt;user&gt; [make-account]
+      </RT·code>
+
+      <p>
+        A keyword such as <RT·code>make-account</RT·code> is a word given after a command's other arguments, as the command itself is a word, not a flag. The two user specifiers may be given in either order. In 5.0 one names an account on this system and the other a storage user; correspondences between two storage databases come later. The host name must be this system's, which confirms that the superuser is on the machine he means. When the account exists, it is adopted: it must belong to a person, with a system uid at or above <RT·code>UID_MIN</RT·code>, its home must be <RT·code>/home/&lt;account&gt;</RT·code>, and no other storage user may already be the same user as it. When it does not exist, the keyword <RT·code>make-account</RT·code> makes it, with a system uid from the system's range that no account, no group and no row of the system map has had. Without the keyword the command refuses, so that a mistyped name does not make an account.
+      </p>
+
+      <p>
+        The first time a storage user is made the same user as an account on a system, the storage database notes that system in <RT·code>system_seen</RT·code>. That note and the system map row together are what 5.0 calls an introduction; in 6.0 it is also when keys are exchanged. <RT·code>user make</RT·code> with <RT·code>make-account</RT·code> makes a storage user and, in the same command, an account of the same name, the same user as it.
+      </p>
+
+      <p>
+        <RT·code>is-not-same-user</RT·code> undoes it: it unmounts the home if it is mounted from that storage, deletes the mount point attach made, deletes the account if SubU made it and keeps an adopted one, and retires the row. <RT·code>same-user show</RT·code> lists who is the same user as whom, with the storage users and person accounts that are not. <RT·code>same-user suggest</RT·code> prints <RT·code>is-same-user</RT·code> commands proposed by matching names, for the superuser to read and run; it changes nothing. Matching names is a guess, and is used nowhere else.
+      </p>
+
+      <p>
+        Someone else's storage, plugged into this system, gets nothing until the superuser makes its users the same users as accounts here. There is no guest attach in 5.0: every storage is introduced by the superuser. A user named <RT·code>Thomas</RT·code> on that storage is no one here until the system map says so.
+      </p>
+
+      <p>
+        Two storage databases may say that a user of one is the same user as a user of the other, and they may say it while a system's map says otherwise. Such a claim grants nothing until a system acts on it, as in mounting a MasU's view of a SubU kept on other storage. A system acts only on its own record: it does not infer that two accounts are the same user from what storage databases say, and where the claims of storage databases and its own map disagree, it reports the disagreement. A SubU made through the server on this system was made by this system, which records the MasU relation itself.
+      </p>
+
+      <p>
+        In 5.0 storage databases and systems recognize each other by database uuid and system uuid alone. A copy of a storage database is taken for the original, and gains the accounts mapped to the original's users. That is enough among one person's machines and storage. It is not enough among strangers, because either kind of uuid can be copied; the migration to a cryptographic check is given under standard 6.0.
+      </p>
+
+      <h1>The server</h1>
+
+      <h2>What it is</h2>
+
+      <p>
+        The server is the one program that changes accounts, databases and mounts. It runs as root, as a system service, and takes requests from any user over a Unix domain socket, <RT·code>/run/SubU/socket</RT·code>. The socket is open to every user; the server decides what each request may do.
+      </p>
+
+      <p>
+        The server handles one request at a time. Two requests can then never give out the same uid or the same name, and no locking is needed.
+      </p>
+
+      <h2>Who is asking</h2>
+
+      <p>
+        The server learns the requesting user from the kernel. After a client connects, the server reads the <RT·code>SO_PEERCRED</RT·code> socket option, which gives the process id, uid and gid the kernel recorded for the client when it called <RT·code>connect</RT·code>. The client does not send them, so it cannot misstate them. The server authorizes by the uid and never by the process id, because process ids are reused. The uid gives the account name through <RT·code>getpwuid</RT·code>, and the account name is the prefix of any SubU the user makes.
+      </p>
+
+      <h2>Requests</h2>
+
+      <p>
+        Each request is checked, carried out as a database transaction and the system changes that go with it, and answered. A user may act on itself and on any user in the tree below it, with the authority of the requesting user; this is how a SubU's window, opened from its MasU's, acts with the MasU's authority.
+      </p>
+
+      <ul>
+        <li><RT·code>make</RT·code> &lt;short name&gt;: make a SubU of the requesting user. Checks: the short name is valid and not in use; the requesting user's limit, and the limit of every user above it in its tree, allow one more. The SubU is made in the requesting user's database unless another attached database is named. Steps: a database uid, never given before, and the user row in the storage database; a system uid, never given before, and the row in the system map; the account in <RT·code>/etc/passwd</RT·code>, through <RT·code>useradd --badname</RT·code>; the home directory in <RT·code>home/SubU/user_data</RT·code>, owned by the database uid, mode 0700; the mount of it at <RT·code>/home/&lt;name&gt;</RT·code>; the MasU's view.</li>
+        <li><RT·code>rename</RT·code> &lt;user&gt; &lt;new short name&gt;: rename a SubU. The SubU, and every SubU below it, whose names begin with its name, must be logged out; all are renamed together. The uids and files do not change; the home directories, mount points and views are renamed with them.</li>
+        <li><RT·code>deprecate</RT·code> &lt;user&gt;: end the SubU's sessions, lock its account, and mark it deprecated. Its data, name and uid are kept. It still counts against the limits. A deprecated SubU can be restored.</li>
+        <li><RT·code>deallocate</RT·code> &lt;user&gt;: remove a deprecated SubU. Its account and views are removed, and its database uid and system uid are retired. What becomes of its data is open: the proposal is to move it to a holding directory on the storage, from which only the superuser removes it.</li>
+        <li><RT·code>view</RT·code> [&lt;user&gt;]: report a user and its tree: names, states, storage, and whether each is mounted. Changes nothing.</li>
+        <li><RT·code>set views</RT·code>: mount the requesting user's views of its SubUs that are on attached storage. Views already mounted are left as they are.</li>
+        <li><RT·code>reconcile</RT·code>: compare the databases on attached storage with <RT·code>/etc/passwd</RT·code> and the mount table, complete what an interrupted request left undone, and report what differs. Run at start and on demand. Superuser only.</li>
+      </ul>
+
+      <p>
+        The superuser's commands are not requests. <RT·code>SubU_admin</RT·code> runs as root and calls the work functions itself, so making users the same users, attaching, detaching and setting limits work while the server is stopped, at boot for instance. The server and <RT·code>SubU_admin</RT·code> may both write a database; SQLite's lock lets one transaction in at a time.
+      </p>
+
+      <h2>Partial failure</h2>
+
+      <p>
+        A request makes several changes, and any of them can fail after the earlier ones succeeded. The databases record the intended state of each user. A failure leaves the intended state recorded and the system short of it; <RT·code>reconcile</RT·code> finishes the work or reports why it cannot. A request is complete only when the system matches the databases.
+      </p>
+
+      <h2>Protocol</h2>
+
+      <p>
+        A request is one JSON object on one line, carrying the protocol version, the request name, and its arguments. The answer is one JSON object on one line, carrying whether the request succeeded, its result, and on failure a message for a person to read.
+      </p>
+
+      <h2>The service unit</h2>
+
+      <p>
+        The server's systemd unit must not set <RT·code>PrivateMounts</RT·code>, <RT·code>ProtectHome</RT·code> or any other option that gives the service a mount namespace of its own. A mount made inside such a namespace exists only for the service, and the users never see it.
+      </p>
+
+      <h1>Limits</h1>
+
+      <p>
+        Making a SubU takes a database uid from a storage database and a system uid and an account from the system, and the system's are finite. Without a limit, a user could take all of them. Each user has a limit on the number of SubUs in its tree, counting SubUs at every depth and counting deprecated SubUs. Limits are kept in the system database. The superuser sets them with <RT·code>SubU_admin limit set</RT·code>. A user with no limit set has a limit of 0, and cannot make SubUs. Any user with a limit above 0 can make SubUs.
+      </p>
+
+      <p>
+        A SubU made by a SubU counts against the limits of every user above it. The starting value suggested for a person is 100.
+      </p>
+
+      <h1>Mounts</h1>
+
+      <h2>Idmapped mounts</h2>
+
+      <p>
+        Every SubU mount is an idmapped mount: a bind mount that carries a translation of uids, applied by the kernel to every permission check and to every file created through it. Idmapped mounts need Linux 5.12 or later, and a file system that supports them, such as ext4, btrfs or xfs. An idmapped mount is kernel state, with no process behind it, so it survives the restart of the server and the end of any user's session. A mount through FUSE, such as bindfs, does neither.
+      </p>
+
+      <h2>Attaching storage</h2>
+
+      <p>
+        <RT·code>SubU_admin attach &lt;SubU dir&gt;</RT·code> verifies the storage database's standards and hash chain, checks its continuity as described under Copies, then reads this system's map for the rows naming that database uuid, and nothing else. For each, it checks that the storage user is active and that the account exists with its system uid and with its home at <RT·code>/home/&lt;account&gt;</RT·code>, and mounts the user's directory in <RT·code>user_data</RT·code> there, translating the database uid to the system uid. Storage users with no row are logged as skipped. The mounts are <RT·code>nosuid</RT·code> and <RT·code>nodev</RT·code>, since a storage can carry set-user-id programs and device files. Files on the storage owned by database uids the mount does not translate appear owned by <RT·code>nobody</RT·code>.
+      </p>
+
+      <h2>Views</h2>
+
+      <p>
+        A MasU sees each of its SubUs at <RT·code>/home/&lt;MasU&gt;/SubU/&lt;short name&gt;</RT·code>: an idmapped mount of the SubU's home that translates the SubU's uid to the MasU's. Files there appear to be the MasU's, and files the MasU creates there belong to the SubU. Views are set when storage is attached, for the MasUs already logged in, and at each login, through <RT·code>set views</RT·code>.
+      </p>
+
+      <h2>Mount points</h2>
+
+      <p>
+        A mount point must exist before a mount, so <RT·code>/home/&lt;name&gt;</RT·code> exists for every known user, attached or not. While nothing is mounted on it, it is an empty directory owned by root with mode 0000, and marked immutable with <RT·code>chattr +i</RT·code>. No user can enter it, and nothing can be written into it to be hidden later by the mount.
+      </p>
+
+      <h1>Login</h1>
+
+      <p>
+        A SubU whose storage is not attached has no home. A login into the empty mount point finds no initialization files, and does not read them later when the storage arrives. Login is therefore refused for a managed user whose home is not mounted.
+      </p>
+
+      <p>
+        The check is in PAM, which every way of logging in passes through: the display manager, the console, ssh, <RT·code>su</RT·code> and <RT·code>machinectl shell</RT·code>.
+      </p>
+
+      <RT·code>
+        account sufficient pam_succeed_if.so uid = 0 quiet
+        account required   pam_exec.so quiet /usr/local/lib/SubU/home_present
+      </RT·code>
+
+      <p>
+        <RT·code>home_present</RT·code> allows the login when the user is not managed by SubU, or when <RT·code>/home/&lt;name&gt;</RT·code> is a mount point, and refuses it otherwise. The first line keeps root able to log in whatever the check does.
+      </p>
+
+      <p>
+        A user session, when it starts, sends <RT·code>set views</RT·code>. The server knows the user from the socket, so a session can set only its own views.
+      </p>
+
+      <h1>Programs</h1>
+
+      <ul>
+        <li><RT·code>SubU</RT·code>: the user's program. Its commands send requests to the server; its <RT·code>window</RT·code> command opens the resource window, which shows the user's SubUs and their states and sends the same requests. Runs as the user.</li>
+        <li><RT·code>SubU_admin</RT·code>: the superuser's program. Root. Its commands: <RT·code>system make</RT·code>, <RT·code>system show</RT·code> and <RT·code>system delete</RT·code>; <RT·code>storage make</RT·code>, <RT·code>storage show</RT·code> and <RT·code>storage delete</RT·code>, each given a SubU dir; <RT·code>user make</RT·code>; <RT·code>is-same-user</RT·code>, <RT·code>is-not-same-user</RT·code>, <RT·code>same-user show</RT·code> and <RT·code>same-user suggest</RT·code>; <RT·code>attach</RT·code> and <RT·code>detach</RT·code>; and <RT·code>limit set</RT·code>. At boot, before logins are allowed, <RT·code>attach</RT·code> is run for every storage present, the disk inside the machine included, so that <RT·code>/home</RT·code> is populated. Detaching is refused while an account it would unmount is logged in. Unlocking an encrypted storage and mounting it come later.</li>
+        <li><RT·code>SubU_server</RT·code>: the server, started by its systemd unit. Nobody types it.</li>
+        <li><RT·code>home_present</RT·code>: the PAM check.</li>
+        <li>The schema and initialization scripts.</li>
+      </ul>
+
+      <p>
+        Each program keeps the RT convention of a command line interface apart from its work functions. There are two layers of work functions. Those that change the system run as root; <RT·code>SubU_admin</RT·code> and the server import them. The user's functions send requests to the server and return its replies; <RT·code>SubU</RT·code> and the window import them. The socket between the layers is where privilege changes. Keeping the root functions separate lets them later be moved into a smaller program of their own, or into the kernel.
+      </p>
+
+      <h1>Open questions</h1>
+
+      <ul>
+        <li>What deallocation does with a SubU's data.</li>
+        <li>What <RT·code>SubU_admin attach</RT·code> does when it finds a forked database, beyond refusing to attach it.</li>
+        <li>Whether a MasU's views are removed when its last session ends, or left until the storage is detached.</li>
+        <li>How resources other than accounts and storage, such as network zones and devices, are recorded in the database.</li>
+      </ul>
+
+      <h1>Road map</h1>
+
+      <p>
+        Standard 5.0 is the design above. Later standards add the following, each described in its own section. A database lists the standards it follows in its <RT·code>standard</RT·code> table, so a database moves to a later standard by listing it, and a program that follows only an earlier one refuses it.
+      </p>
+
+      <ul>
+        <li>6.0: longer user names; keys, for unlocking storage and recognizing it; signed heads; deduplication; deep freeze.</li>
+        <li>7.0: integration of archives and of child copies, and merging of branches; a property file system.</li>
+        <li>Later, version not yet assigned: guests.</li>
+      </ul>
+
+      <p>
+        <em>Guests.</em> A person who plugs storage into someone else's machine and works there, with no administrator introducing it first, makes the machine a display with a processor for whatever storage is brought to it. The guest's users would be given accounts at attach, in a band of system uids of their own, recorded in the system map as transient, and deleted at detach, with no rights to anything of the machine's owners. In 5.0 every storage is introduced by the superuser. Guests wait until keys, automatic attach, and the protection of a machine from what a stranger's storage carries, are understood.
+      </p>
+
+      <h1>Standard 6.0</h1>
+
+      <h2>Longer user names</h2>
+
+      <p>
+        Account names built from a chain of MasU names grow long, and 32 bytes, with two for each middle dot, is soon reached. 6.0 is to allow names of 128 bytes. The limit is in user space: the login records and <RT·code>useradd</RT·code>. Distributions are replacing the <RT·code>utmp</RT·code> records with <RT·code>wtmpdb</RT·code> and <RT·code>lastlog2</RT·code>, which have no fixed name field; openSUSE has done so. What remains is the check in <RT·code>useradd</RT·code>, which the SubU project may carry a patch for. Whether a system already accepts longer names is found by making a test account with a name past 32 bytes.
+      </p>
+
+      <h2>Keys</h2>
+
+      <p>
+        In 5.0, databases and systems recognize each other by database uuid and system uuid. 6.0 adds two uses of keys.
+      </p>
+
+      <p>
+        <em>Unlocking storage.</em> A storage's file system is encrypted with LUKS2, which keeps up to 32 key slots, any of which opens it. Each person who owns users on the storage has a slot, opened by a passphrase or by a hardware token such as a FIDO2 key. When a storage is introduced to a system, the superuser opens it once, and the system adds a slot of its own, with a key it keeps, so that the storage is opened and attached on that system without asking anyone for a password. systemd-cryptenroll already enrolls such slots, and can seal a key in the machine's TPM, the security chip on its motherboard, so that the key is useless away from that machine. A slot can be removed from any machine that can open the storage, which is how a stolen laptop is cut off from it. Opening a storage with a key the system enrolled is also the proof that it is the storage that was introduced, which uuids and hashes cannot give: a fabricated storage cannot be opened with that key. The keys a system keeps make its system database, or wherever the keys are kept, a target in the way {C('/etc/shadow')} is; sealing them in the TPM is the protection. The disk inside the machine can be treated the same way, its {C('/home')} opened by the system's own slot at boot, which keeps every storage alike.
+      </p>
+
+      <p>
+        <em>Signed heads.</em> Each database and each system also holds a key pair. Each transaction's hash, which covers every transaction before it, is signed with the private key of the party that wrote it, so that a head can be shown to have been written by whoever holds that key, and not only to follow from the heads before it. The signature is checked with the public key, and the first is-same-user between a system and a storage database records each one's public key in the other's database, alongside its database uuid or system uuid. On attach, each side checks that the other holds the private key matching the public key recorded for it, so a copied database uuid or system uuid alone is refused. A storage is not a running party, so a database's private key is a file on its storage, and a full copy of the database copies the key too; protecting the key, for example inside the storage's encryption, is part of the 6.0 design.
+      </p>
+
+      <p>
+        The migration touches only the acquaintance table and the programs that read it. A 6.0 database adds the key columns and lists both <RT·code>5.0</RT·code> and <RT·code>6.0</RT·code> in its standard table while their keys are exchanged. The system map, uids and the user table are unchanged, because a user is still identified by its database and its uid in that database.
+      </p>
+
+      <h2>Deduplication</h2>
+
+      <p>
+        A storage gathers copies of the same files, from old archives and from copies made between users. On btrfs, two files with the same content can be made to share their extents, after which the content is stored once while the files stay separate: a later write to one of them is written apart from the other. The kernel call that does this, <RT·code>FIDEDUPERANGE</RT·code>, compares the two ranges byte for byte before sharing them, so a false match on a hash cannot corrupt data. Tools such as duperemove and bees find candidates by hashing and leave the comparison to that call.
+      </p>
+
+      <p>
+        The SubU server already runs as a service, and is a natural home for a background pass over attached storage. The pass keeps an index of content hashes, gives the kernel call the pairs whose hashes match, and so keeps each storage compacted as it is used. On a file system without shared extents, the pass reports duplicates and changes nothing. The same index serves integration in 7.0.
+      </p>
+
+      <h2>Deep freeze</h2>
+
+      <p>
+        A person's SubUs, archives included, may not fit on one portable storage: 500 GB, say, against more data than that. Most of it is seldom read. Deep freeze divides a SubU into a working part and a frozen part by access time. Files not read for a long time move to the frozen part, which is kept on other storage, and a copy of a SubU to a storage that cannot hold all of it takes the working part only. Whether the frozen part's directory tree stays visible, with its content brought in when its storage is attached, is open.
+      </p>
+
+      <p>
+        Access times are recorded only when a file system is mounted with <RT·code>atime</RT·code> or <RT·code>relatime</RT·code>. <RT·code>relatime</RT·code>, the Linux default, updates a file's access time at most once a day, which is enough here; under <RT·code>noatime</RT·code> nothing is recorded, and deep freeze cannot work. Bringing a working part back after it was changed elsewhere is the integration problem of 7.0.
+      </p>
+
+      <h1>Standard 7.0</h1>
+
+      <h2>Integration</h2>
+
+      <p>
+        Two kinds of integration are needed. The first brings the files of old archives into the current SubUs. The old archives have older, less mature directory structures, and the aim is to place their files in the current structure, not to keep the old structures. The content-hash index kept for deduplication shows which old files already exist in the current tree, under any name, and leaves the rest to be placed.
+      </p>
+
+      <p>
+        The second brings back a child copy: part of a SubU copied to a portable storage, changed there, and returned. Its changes are merged into the original. A change to the directory structure on either side is the hard case, as when a file is moved on one side and changed on the other.
+      </p>
+
+      <h2>Property file system</h2>
+
+      <p>
+        Both kinds of integration are hard because a file has one place in one tree. A file system organized by properties, or tags, would let a file belong to an old structure and a new one at once, and make a directory a query. SubU's contract with storage is that a user's home is a directory mounted at <RT·code>/home/&lt;name&gt;</RT·code>, and the mounting is one function in the code. A home provided by a property file system changes that function and nothing else, provided the file system supports idmapped mounts or translates uids itself. At that point the SubU project is expected to fork.
+      </p>
+
+
+    </RT·article>
+  </body>
+</html>
